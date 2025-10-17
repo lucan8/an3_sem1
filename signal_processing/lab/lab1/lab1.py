@@ -1,6 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import scipy
 
+sound_rate = 44100
 def ex1():
     # Continous
     lower_b = 0
@@ -48,31 +50,36 @@ def ex2():
     def a():
         plt.figure()
         lower_b = 0
-        upper_b = 4
-        sample_count = 1600
+        upper_b = 20
+        sample_count = 40000
         real_axis_cont = [x for x in np.linspace(lower_b, upper_b, sample_count)]
         def signal_2_1(t):
-            freq = 400
+            freq = 20000
             return np.sin(np.pi * (2 * freq * t + 1 / 3))
 
-        signal21_plots = [signal_2_1(elem) for elem in real_axis_cont]
+        signal21_plots = np.array([signal_2_1(elem) for elem in real_axis_cont])
         plt.stem(real_axis_cont, signal21_plots)
         plt.savefig("signal_processing/lab/lab1/graphs/ex2/a.pdf", format="pdf")
+        
+        scipy.io.wavfile.write('signal_processing/lab/lab1/sounds/ex2/a.wav', sound_rate, signal21_plots)
         plt.close()
 
     def b():
         plt.figure()
         lower_b = 0
-        upper_b = 3
-        sample_count = 2400
+        upper_b = 20
+        sample_count = sound_rate * (upper_b - lower_b)
         real_axis_cont = [x for x in np.linspace(lower_b, upper_b, sample_count)]
         def signal2_2(t):
-            freq = 800
+            freq = 440
             return np.sin(np.pi * (2 * freq * t + 1 / 3))
 
-        signal22_plots = [signal2_2(elem) for elem in real_axis_cont]
+        signal22_plots = np.array([signal2_2(elem) for elem in real_axis_cont])
         plt.plot(real_axis_cont, signal22_plots)
         plt.savefig("signal_processing/lab/lab1/graphs/ex2/b.pdf", format="pdf")
+
+        scaled = np.int16(signal22_plots / np.max(np.abs(signal22_plots)) * 32767)
+        scipy.io.wavfile.write('signal_processing/lab/lab1/sounds/ex2/b.wav', sound_rate, scaled)
         plt.close()
 
     def c():
@@ -87,9 +94,11 @@ def ex2():
             freq = 5
             return np.mod(t, freq)
 
-        signal_sawtooth_plot = [signal_sawtooth(elem) for elem in real_axis_cont]
+        signal_sawtooth_plot = np.array([signal_sawtooth(elem) for elem in real_axis_cont])
         plt.plot(real_axis_cont, signal_sawtooth_plot)
         plt.savefig("signal_processing/lab/lab1/graphs/ex2/c.pdf", format="pdf")
+
+        scipy.io.wavfile.write('signal_processing/lab/lab1/sounds/ex2/c.wav', sound_rate, signal_sawtooth_plot)
         plt.close()
 
     def d():
@@ -102,9 +111,11 @@ def ex2():
         def signal_square(t):
             return np.sign(np.sin(t))
 
-        signal_square_plot = [signal_square(elem) for elem in real_axis_cont]
+        signal_square_plot = np.array([signal_square(elem) for elem in real_axis_cont])
         plt.plot(real_axis_cont, signal_square_plot)
         plt.savefig("signal_processing/lab/lab1/graphs/ex2/d.pdf", format="pdf")
+
+        scipy.io.wavfile.write('signal_processing/lab/lab1/sounds/ex2/d.wav', sound_rate, signal_square_plot)
         plt.close()
 
     def e():
