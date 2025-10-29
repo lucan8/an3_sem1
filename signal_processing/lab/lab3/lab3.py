@@ -87,7 +87,7 @@ def ex3():
     fig, axs = plt.subplots(2)
     low = 0
     high = 1
-    sample_count_cont = 1000
+    sample_count_cont = 1024
     real_axis = np.linspace(low, high, sample_count_cont)
 
     # Create composed signal
@@ -97,14 +97,18 @@ def ex3():
     my_signals = np.array([np.array([my_sin1(t, sin_freq[i], sin_ampl[i], fase[i]) for t in real_axis]) for i in range(len(sin_freq))])
     sum_signal = my_signals.sum(axis=0)
 
-    # Get the abs of fourier trans elements for different omegas
-    omegas = [i for i in range(1, max(sin_freq))]
-    fourier_trans = np.array([get_Fourier_trans(sum_signal, omega) for omega in omegas])
+    # Get the abs of fourier trans elements for different omegas 
+    N = 1024
+    sum_signal_samples = np.array([sum_signal[i] for i in range(0, sum_signal.size, sum_signal.size // N)])
+    fourier_trans = np.array(get_Fourier_matrix(N))
+    transformed =  np.abs(np.matmul(fourier_trans, sum_signal_samples))
 
+    print(sum_signal_samples.shape, fourier_trans.shape, transformed.shape)
     axs[0].plot(real_axis, sum_signal)
     axs[0].set_title('Composed signal')
 
-    axs[1].stem(omegas, fourier_trans)
+    print(sum_signal_samples.shape, transformed.shape)
+    axs[1].stem([i * (sample_count_cont / N) for i in range(sum_signal_samples.size)], transformed)
     axs[1].set_title('Magnitude of Fourier transform')
     axs[1].set_xlabel('freq')
     axs[1].set_ylabel('Fourier[freq]')
