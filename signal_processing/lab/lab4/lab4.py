@@ -70,6 +70,7 @@ def ex1():
     plt.grid(True, which='both', ls='--', lw=0.5)
     plt.show()
     plt.savefig(f"{plot_dir}/ex1.pdf")
+    plt.close()
 
 
 # EX2 AND EX3
@@ -107,6 +108,7 @@ def ex2_3(ex2: bool):
 
     fig.show()
     fig.savefig(f"{plot_dir}/{file_name}")
+    plt.close()
 
 # ex2_3(True)
 # ex2_3(False)
@@ -114,21 +116,30 @@ def ex2_3(ex2: bool):
 # EX4: 2 * 200HZ
 
 # EX5, EX6
-plt.figure()
-sample_rate, aeiou_signal = scipy.io.wavfile.read(f"{curr_dir}/aeiou.wav")
-group_size = int(0.1 * aeiou_signal.size)
-overlap_percentage = 0.5
-aeiou_signal_grouped = np.array([aeiou_signal[i:i + group_size] for i in range(0, aeiou_signal.size - group_size + 1, int(group_size * overlap_percentage))])
-ffts = np.array([np.abs(np.fft.fft(signal)[:group_size // 2]) for signal in aeiou_signal_grouped])
-plt.imshow(20 * np.log10(ffts.T + 1e-6), aspect='auto', origin='lower')
-plt.xlabel("Window index (time)")
-plt.ylabel("Frequency bin")
-plt.colorbar(label="Amplitude (dB)")
-plt.show()
+def ex6():
+    plt.figure()
+    sample_rate, aeiou_signal = scipy.io.wavfile.read(f"{curr_dir}/aeiou.wav")
+    group_size = int(0.1 * aeiou_signal.size)
+    overlap_percentage = 0.5
+    aeiou_signal_grouped = np.array([aeiou_signal[i:i + group_size] for i in range(0, aeiou_signal.size - group_size + 1, int(group_size * overlap_percentage))])
+    ffts = np.array([np.abs(np.fft.fft(signal)[:group_size // 2]) for signal in aeiou_signal_grouped])
+    plt.imshow(20 * np.log10(ffts.T + 1e-6), aspect='auto', origin='lower')
+    plt.xlabel("Window index (time)")
+    plt.ylabel("Frequency bin")
+    plt.colorbar(label="Amplitude (dB)")
+    plt.savefig(f"{plot_dir}/ex6.pdf")
+    plt.close()
 
-# EX7
-SNR_db = 80
-P_s = 90
-SNR = (10 ** (SNR_db / 10))
-P_n = P_s / SNR
-print(P_n)
+# EX7. result: 9e-07 
+def ex7():
+    SNR_db = 80
+    P_s = 90
+    SNR = (10 ** (SNR_db / 10))
+    P_n = P_s / SNR
+    print(P_n)
+
+ex1()
+ex2_3(True)
+ex2_3(False)
+ex6()
+ex7()
