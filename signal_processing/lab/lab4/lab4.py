@@ -122,8 +122,8 @@ def ex6():
     group_size = int(0.1 * aeiou_signal.size)
     overlap_percentage = 0.5
     aeiou_signal_grouped = np.array([aeiou_signal[i:i + group_size] for i in range(0, aeiou_signal.size - group_size + 1, int(group_size * overlap_percentage))])
-    ffts = np.array([np.abs(np.fft.fft(signal)[:group_size // 2]) for signal in aeiou_signal_grouped])
-    plt.imshow(20 * np.log10(ffts.T + 1e-6), aspect='auto', origin='lower')
+    ffts = np.array([(np.abs(np.fft.fft(signal) / signal.size)[:group_size // 2]) for signal in aeiou_signal_grouped])
+    plt.imshow(10 * np.log10(ffts.T), aspect='auto', origin='lower')
     plt.xlabel("Window index (time)")
     plt.ylabel("Frequency bin")
     plt.colorbar(label="Amplitude (dB)")
@@ -138,7 +138,7 @@ def ex7():
     P_n = P_s / SNR
     print(P_n)
 
-ex1()
+# ex1()
 ex2_3(True)
 ex2_3(False)
 ex6()
