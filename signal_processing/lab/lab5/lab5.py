@@ -3,13 +3,14 @@ import os
 import matplotlib.pyplot as plt
 
 curr_dir = os.path.dirname(__file__)
+lab_dir = os.path.dirname(curr_dir)
 plot_dir = os.path.join(curr_dir, "graphs")
 # a): (once an hour) : 1 / 3600 hz
 
 # b): (0 - 23 hours) : 0 - 23 * 3600 ?
 
 # c) : 27433.5
-signal = np.array([x[2] for x in np.genfromtxt(f'{curr_dir}/Train.csv', delimiter=',')])
+signal = np.array([x[2] for x in np.genfromtxt(f'{lab_dir}/Train.csv', delimiter=',')])
 
 # d)
 sampling_freq = 1 / 3600
