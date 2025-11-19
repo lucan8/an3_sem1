@@ -149,13 +149,11 @@ def ex6():
 
     # c)
     sampling_freq = 1 / 3600
-    # signal_fft = np.abs(np.fft.fft(signal) / signal.size)[:signal.size // 2]
-    freq_axis = sampling_freq * np.linspace(0, signal.size // 2, signal.size // 2)
 
-    # I magically choose index number 10
-    cut_point = 10
-    cut_freq = freq_axis[cut_point]
-    nyquist_freq = freq_axis[-1]
+    # Cut point at 6 hours
+    cut_point = 6
+    cut_freq = sampling_freq / cut_point
+    nyquist_freq = sampling_freq / 2
     norm_cut_freq = cut_freq / nyquist_freq
 
     # d)
