@@ -151,7 +151,7 @@ def ex6():
     sampling_freq = 1 / 3600
 
     # Cut point at 6 hours
-    cut_point = 6
+    cut_point = 6 
     cut_freq = sampling_freq / cut_point
     nyquist_freq = sampling_freq / 2
     norm_cut_freq = cut_freq / nyquist_freq
