@@ -59,16 +59,18 @@ def ex1():
     plt.colorbar()
     plt.savefig(f"{plot_dir}/ex1/e/colorbar.pdf")
 
-# Anything above the mean is the min between mean and pixel - mean
+# Clip anything too far from the mean to the mean
 def cut_based_on_mean(img):
     fft_img = np.fft.fft2(img)
     fft_mag = np.abs(fft_img)
+    
     mag_mean = np.mean(fft_mag)
     mag_std = np.std(fft_mag)
+    std_count = 3
 
     for i in range(len(fft_img)):
         for j in range(len(fft_img[i])):
-            if fft_mag[i][j] - mag_mean > 3 * mag_std:
+            if fft_mag[i][j] - mag_mean > std_count * mag_std:
                 fft_img[i][j] = mag_mean
     img_cutoff = np.fft.ifft2(fft_img)
     img_cutoff = np.real(img_cutoff)
