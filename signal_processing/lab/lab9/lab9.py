@@ -1,9 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import statsmodels.tsa.arima.model.ARIMA
+from statsmodels.tsa.arima.model import ARIMA
 import os
 
-# TODO: Test the arima models
 curr_dir = os.path.dirname(__file__)
 lab_dir = os.path.dirname(curr_dir)
 plot_dir = os.path.join(curr_dir, "graphs")
@@ -147,7 +146,6 @@ def ex2():
     plt.close()
     # axs[4].plot(worst_pred)
 
-
     # Triple additive mediation
     L = 3
     alfa_beta_gamma = make_triplets(alfa_grid, alfa_grid, alfa_grid)
@@ -168,17 +166,17 @@ def ex2():
     plt.legend()
     plt.savefig(f"{plot_dir}/ex2/triple_exp.pdf")
 
-# ERROR? FIRST AND LAST ELEM OF PARAM SHOULD BE BUT ONLY THE LAST IS
+# ERROR? FIRST AND LAST ELEM OF PARAM SHOULD BE 1 BUT ONLY THE LAST IS
 # PROBABLY SHOULD NOT TAKE THE CURRENT DEVIATION AND THE MEAN WHEN COMPUTING PARAMS
-def MA_model_fit(time_series:np.ndarray, horizon:int):
-    time_series_samples = time_series[horizon:]
-    deviations = np.zeros((time_series_samples.shape[0], horizon + 2))
+def MA_model_fit(time_series:np.ndarray, q:int):
+    time_series_samples = time_series[q:]
+    deviations = np.zeros((time_series_samples.shape[0], q + 2))
     
     # Fill deviations matrix
-    for i in range(horizon, time_series.shape[0]):
-        curr_window = time_series[i - horizon : i + 1][::-1]
+    for i in range(q, time_series.shape[0]):
+        curr_window = time_series[i - q : i + 1][::-1]
         mean = np.mean(curr_window)
-        deviations[i - horizon] = np.array([elem - mean for elem in curr_window] + [mean])
+        deviations[i - q] = np.array([elem - mean for elem in curr_window] + [mean])
     
     deviations_t = deviations.transpose()
     deviations_mult_with_trans = np.matmul(deviations_t, deviations)
@@ -191,22 +189,41 @@ def MA_model_fit(time_series:np.ndarray, horizon:int):
 
 def MA_model_pred(time_series:np.ndarray, params:np.ndarray, deviations:np.ndarray):
     pred = np.zeros(time_series.shape)
-    horizon = params.shape[0]
-    pred[:horizon] = time_series[:horizon]
+    q = params.shape[0]
+    pred[:q] = time_series[:q]
     err = 0
-    for i in range(horizon - 1, pred.shape[0] - 1):
-        pred[i + 1] = np.matmul(params.transpose(), deviations[i - horizon + 1])
+    for i in range(q - 1, pred.shape[0] - 1):
+        pred[i + 1] = np.matmul(params.transpose(), deviations[i - q + 1])
         err += np.linalg.norm(time_series[i + 1] - pred[i + 1]) ** 2
     
     return err, pred
 
-def AR_model_fit(x: np.ndarray, p:int, m:int):
-    Y = np.array([x[x.shape[0] - m - i:x.shape[0] - i]for i in range(1, p + 1)]).transpose()
-    x_samples =  x[x.shape[0] - m:]
+def MA_model_fit_pred(time_series:np.ndarray, q:int):
+    deviations, params_MA = MA_model_fit(time_series, q)
+    return MA_model_pred(time_series, params_MA, deviations)
+
+# Chooses the best MA model for time series using q_grid
+def MA_best_model(time_series:np.ndarray, q_grid: list[int]):
+    best_model_pred = None
+    best_model_err = np.inf
+    chosen_q = None
+
+    for q in q_grid:
+        err, pred = MA_model_fit_pred(time_series, q)
+        if err < best_model_err:
+            best_model_err = err
+            best_model_pred = pred
+            chosen_q = q
+    return best_model_err, best_model_pred, chosen_q
+
+def AR_model_fit(time_series: np.ndarray, p:int, m:int):
+    ts_size = time_series.shape[0]
+    Y = np.array([time_series[ts_size - m - i:ts_size - i]for i in range(1, p + 1)]).transpose()
+    time_series_samples =  time_series[ts_size - m:]
 
     Y_mult_with_trans = np.matmul(Y.transpose(), Y)
     Y_mult_with_trans += np.random.random(Y_mult_with_trans.shape)
-    params = np.matmul(np.matmul(np.linalg.inv(Y_mult_with_trans), Y.transpose()), x_samples.transpose())
+    params = np.matmul(np.matmul(np.linalg.inv(Y_mult_with_trans), Y.transpose()), time_series_samples.transpose())
 
     return params
 
@@ -221,35 +238,92 @@ def AR_model_pred(time_series: np.ndarray, params:np.ndarray):
     
     return err, pred
 
+def AR_model_fit_pred(time_series: np.ndarray, p:int, m:int):
+    params_AR = AR_model_fit(time_series, p, m)
+    return AR_model_pred(time_series, params_AR)
+
+# m will be implicitly double p
+def AR_best_model(time_series: np.ndarray, p_grid:list[int]):
+    best_model_pred = None
+    best_model_err = np.inf
+    chosen_p = None
+
+    for p in p_grid:
+        m = p * 2
+        err, pred = AR_model_fit_pred(time_series, p, m)
+        if err < best_model_err:
+            best_model_err = err
+            best_model_pred = pred
+            chosen_p = p
+    return best_model_err, best_model_pred, chosen_p
+
+
+def ARMA_best_model(time_series: np.ndarray, p_q_grid: list[tuple[int, int]]):
+    smallest_sse = np.inf
+    best_model = None
+    chosen_p = None
+    chosen_q = None
+
+    # Get the best model based on sse
+    for p, q in p_q_grid:
+        try:
+            model = ARIMA(time_series, order=(p, 0, q)).fit()
+
+            if model.sse < smallest_sse:
+                best_model = model
+                smallest_sse = model.sse
+                chosen_p = p
+                chosen_q = q
+        except Exception:
+            pass
+    
+    pred, err = best_model.predict(), best_model.sse
+
+    return err, pred, chosen_p, chosen_q
+
+# Compare AR, MA, their average pred and library ARMA
+# Note: their average pred was my initial interpretation of ARMA so I let it here for fun
 def ex3_4():
-    # Train test MA model
-    horizon = 10
-    deviations, params_MA = MA_model_fit(time_series, horizon)
-    err_MA, pred_MA = MA_model_pred(time_series, params_MA, deviations)
+    # Grid creation
+    grid_size = 22
+    p_grid = list(range(2, grid_size))
+    q_grid = list(range(2, grid_size))
+    p_q_grid = make_pairs(p_grid, q_grid)
 
     # Train test AR model
-    p = horizon
-    m = horizon * 2
-    params_AR = AR_model_fit(time_series, p, m)
-    err_AR, pred_AR = AR_model_pred(time_series, params_AR)
+    err_AR, pred_AR, p_AR = AR_best_model(time_series, p_grid)
+    print(f"AR model p={p_AR}, err={err_AR:.2f}\n")
 
-    # Test ARMA: NOT GOOD SURELY
-    pred_ARMA = 0.5 * (pred_AR + pred_MA)
-    err_ARMA = np.linalg.norm(time_series - pred_ARMA) ** 2
+    # Best MA model
+    err_MA, pred_MA, q_MA = MA_best_model(time_series, q_grid)
+    print(f"MA model q={q_MA}, err={err_MA:.2f}\n")
 
-    fig, axs = plt.subplots(3)
+    # My interpretation of ARMA from the course: Averaging the predictions of AR and MA
+    pred_My_ARMA = 0.5 * (pred_AR + pred_MA)
+    err_MY_ARMA = np.linalg.norm(time_series - pred_My_ARMA) ** 2
+    print(f"My ARMA model err={err_MY_ARMA:.2f}\n")
+
+    # Actual ARMA
+    err_ARMA, pred_ARMA, p_ARMA, q_ARMA = ARMA_best_model(time_series, p_q_grid)
+    print(f"Real ARMA model p={p_ARMA}, q={q_ARMA}, err={err_ARMA:.2f}")
+
+    fig, axs = plt.subplots(4)
 
     axs[0].plot(time_series, label="Initial")
-    axs[0].plot(pred_AR, label=f"AR p={p}, m={m}, err={err_AR:.2f}")
+    axs[0].plot(pred_AR, label=f"AR p={p_AR}, err={err_AR:.2f}")
     axs[0].legend()
-
-    axs[1].plot(time_series, label="Initial")
-    axs[1].plot(pred_MA, label=f"MA pred horizon={horizon}, err={err_MA:.2f}")
+    
+    axs[1].plot(time_series)
+    axs[1].plot(pred_MA, label=f"MA pred q={q_MA}, err={err_MA:.2f}")
     axs[1].legend()
 
-    axs[2].plot(time_series, label="Initial")
-    axs[2].plot(pred_ARMA, label=f"ARMA err={err_ARMA:.2f}")
+    axs[2].plot(time_series)
+    axs[2].plot(pred_My_ARMA, label=f"(AR + MA) / 2, err={err_MY_ARMA:.2f}")
     axs[2].legend()
+
+    axs[3].plot(time_series)
+    axs[3].plot(pred_ARMA, label=f"ARMA, p={p_ARMA}, q={q_ARMA}, err={err_ARMA:.2f}")
+    axs[3].legend()
     
     fig.savefig(f"{plot_dir}/ex3_4.pdf")
 
