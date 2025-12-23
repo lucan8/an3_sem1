@@ -4,15 +4,20 @@ from scipy import datasets
 from scipy.fft import dctn, idctn, idct
 import cv2
 import os
+from queue import PriorityQueue, Queue
 
 # I WILL ASSUME IMAGES ARE SQUARE SHAPED(NXN)
-# IF NOT I WILL HAVE TO CHANGE ZIG-ZAG CONVERSION
 
-pair_freq = {}
+EOB = -1
+rle_freq = {} # Needed for huffman encoding
+    
+
 def get_mse(initial, compressed):
     return (np.linalg.norm(initial - compressed) ** 2) / initial.size
 
-def encode_block(block: np.ndarray, compr_scale: float = 1):
+# Encodes a 8x8 block into a rle vector
+# Stats mode also tracks the appearance frequency of rle elements
+def encode_block(block: np.ndarray, compr_scale: float = 1, stats_mode: bool=False):
     h, w = block.shape
     Q_jpeg = compr_scale * np.array(
             [[16, 11, 10, 16, 24, 40, 51, 61],
@@ -27,32 +32,42 @@ def encode_block(block: np.ndarray, compr_scale: float = 1):
     block_dctn = dctn(block)
     block_dctn_jpeg = Q_jpeg*np.round(block_dctn/Q_jpeg)
 
-    # bdctn_nz = np.count_nonzero(block_dctn)
-    # bdctn_jpeg_nz = np.count_nonzero(block_dctn_jpeg)
-
-    # print('Componente în frecvență:' + str(bdctn_nz) + 
-    #   '\nComponente în frecvență după cuantizare: ' + str(bdctn_jpeg_nz))
-
     # Convert to zig-zag vec
     zig_zag = to_zig_zag_vec(block_dctn_jpeg)
     
     # Rule length encoding
     rle = to_rle(zig_zag)
 
-    # plt.subplot(121).imshow(block_dctn, cmap=plt.cm.gray)
-    # plt.subplot(122).imshow(block_dctn_jpeg, cmap=plt.cm.gray)
-    # plt.show()
-    # Only for statistics
-    for p in rle:
-        if p in pair_freq:
-            pair_freq[p] += 1
-        else:
-            pair_freq[p] = 1
+    if stats_mode:
+        update_rle_freq(rle)
 
     return rle
 
-# returns a vector of pairs in the form (nr_zero_values_until_non_zero, non_zero_value)
-# the last elem is the number of trailing zeros
+def decode_block(rle: list):
+    return idctn(from_zig_zag_vec(from_rle(rle)))
+
+
+def update_rle_freq(rle_vec: list):
+    global rle_freq
+    last = rle_vec.pop()
+    
+    for zero_count, bit_count, _ in rle_vec:
+        p = (zero_count, bit_count)
+        if p in rle_freq:
+            rle_freq[p] += 1
+        else:
+            rle_freq[p] = 1
+    
+    # Don't forget about the last elem
+    if last != EOB:
+        last = (last[0], last[1])
+    
+    if last in rle_freq:
+        rle_freq[last] += 1
+    else:
+        rle_freq[last] = 1
+
+# returns a vector of pairs in the form (zeros_count, bit_count_non_zero_value, non_zero_value)
 def to_rle(vec: np.ndarray):
     rle = []
     zero_count = 0
@@ -61,10 +76,12 @@ def to_rle(vec: np.ndarray):
         if elem == 0:
             zero_count += 1
         else:
-            rle.append((zero_count, elem))
+            rle.append((zero_count, np.log2(elem), elem))
             zero_count = 0
 
-    return rle + [zero_count]
+    if zero_count > 0:
+        rle.append(EOB)
+    return rle
 
 def from_rle(rle: list):
     res = []
@@ -171,22 +188,28 @@ def go_right_up_fill_vec(row:int, col:int, it_count:int, mat:np.ndarray, vec:lis
         vec.append(mat[row][col])
     return row, col
 
-def decode_block(rle: list):
-    return idctn(from_zig_zag_vec(from_rle(rle)))
 
 # img should be have one channel
-def compress_img(img: np.ndarray):
-    img_jpeg = img.copy()
-
+# returns a list of compressed blocks representing the image
+def compress_img(img: np.ndarray, compr_scale: float = 1, stats_mode: bool = False):
+    # Transform the image into a list of blocks
+    # Each block is partially compressed just before huffman encoding
     h, w = img.shape[0], img.shape[1]
     block_size = 8
+    block_list = []
     for i in range(0, h, block_size):
         for j in range(0, w, block_size):
-            block = img_jpeg[i:i + block_size, j:j+block_size]
-            img_jpeg[i:i + block_size, j:j+block_size] = decode_block(encode_block(block))
+            block = img[i:i + block_size, j:j+block_size]
+            block_list.append(encode_block(block, compr_scale, stats_mode))
 
-    return img_jpeg
+    # Create huffman encoding and map each elem in each block to it's encoding
+    huff_encoding = get_huffman_encoding(rle_freq)
+    block_list = np.squeeze(np.asarray([[huff_encoding[elem] for elem in block] for block in block_list]))
 
+    return block_list
+
+def decompress_img(block_list: np.ndarray):
+    for block in block_list
 
 def task1(img: np.ndarray):
     img_jpeg = compress_img(img)
@@ -225,7 +248,7 @@ img = datasets.ascent()
 task2(img)
 
 freq_of_freq = {}
-for k, v in pair_freq.items():
+for k, v in rle_freq.items():
     if v in freq_of_freq:
         freq_of_freq[v] += 1
     else:
@@ -234,27 +257,3 @@ for k, v in pair_freq.items():
 sorted_freq = sorted(freq_of_freq.items(), key=lambda x: -x[0])
 for k, v in sorted_freq:
     print(k, v)
-
-### ATTEMPT FOR SMART INDEXING 
-# def to_zig_zag_ind(row: int, col: int):
-#     diag_ind = row + col
-
-#     if diag_ind % 2 == 1: # Go left down
-#         diag_start = diag_ind * (diag_ind + 1) / 2
-#         return diag_start + row
-#     else: # Go right up
-#         diag_end = (diag_ind + 1) * (diag_ind + 2) / 2 - 1
-#         return diag_end - row
-
-# def from_zig_zag_ind(ind: int):
-    
-
-# def to_zig_zag_vec(sq_mat: np.ndarray):
-#     sq_mat_size = sq_mat.shape[0]
-#     res = np.zeros(sq_mat_size * sq_mat_size)
-
-#     for row in range(sq_mat_size):
-#         for col in range(sq_mat_size):
-#             ind = to_zig_zag_ind(row, col)
-#             res[ind] = sq_mat[row][col]
-#     return res
