@@ -5,8 +5,10 @@ from scipy.fft import dctn, idctn, idct
 import cv2
 import os
 from queue import PriorityQueue, Queue
+from Huffman import Huffman
 
 # I WILL ASSUME IMAGES ARE SQUARE SHAPED(NXN)
+# FOR NOW EVERYTHING IS IN MEMORY
 
 EOB = -1
 rle_freq = {} # Needed for huffman encoding
@@ -46,7 +48,6 @@ def encode_block(block: np.ndarray, compr_scale: float = 1, stats_mode: bool=Fal
 def decode_block(rle: list):
     return idctn(from_zig_zag_vec(from_rle(rle)))
 
-
 def update_rle_freq(rle_vec: list):
     global rle_freq
     last = rle_vec.pop()
@@ -67,7 +68,9 @@ def update_rle_freq(rle_vec: list):
     else:
         rle_freq[last] = 1
 
+
 # returns a vector of pairs in the form (zeros_count, bit_count_non_zero_value, non_zero_value)
+# negative values become (1 << val.bit_len) - 1 + abs(val)
 def to_rle(vec: np.ndarray):
     rle = []
     zero_count = 0
@@ -76,7 +79,13 @@ def to_rle(vec: np.ndarray):
         if elem == 0:
             zero_count += 1
         else:
-            rle.append((zero_count, np.log2(elem), elem))
+            elem = abs(elem)
+            bit_len = elem.bit_length()
+
+            if elem < 0:
+                elem = (1 << bit_len) - 1 + elem
+
+            rle.append((zero_count, bit_len, elem))
             zero_count = 0
 
     if zero_count > 0:
@@ -202,14 +211,15 @@ def compress_img(img: np.ndarray, compr_scale: float = 1, stats_mode: bool = Fal
             block = img[i:i + block_size, j:j+block_size]
             block_list.append(encode_block(block, compr_scale, stats_mode))
 
-    # Create huffman encoding and map each elem in each block to it's encoding
-    huff_encoding = get_huffman_encoding(rle_freq)
-    block_list = np.squeeze(np.asarray([[huff_encoding[elem] for elem in block] for block in block_list]))
+    # Build huffman tree and table
+    huff = Huffman(rle_freq)
+    
+    block_list = np.squeeze(np.asarray([[huff.table[elem] for elem in block] for block in block_list]))
 
     return block_list
 
-def decompress_img(block_list: np.ndarray):
-    for block in block_list
+# def decompress_img(block_list: np.ndarray):
+#     for block in block_list
 
 def task1(img: np.ndarray):
     img_jpeg = compress_img(img)

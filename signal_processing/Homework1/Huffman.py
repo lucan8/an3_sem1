@@ -1,4 +1,5 @@
 from queue import PriorityQueue, Queue
+from BitStream import BitBuffer
 
 class HuffmanNode:
     def __init__(self, left, right):
@@ -8,25 +9,6 @@ class HuffmanNode:
 class HuffmanLeaf:
     def __init__(self, val):
         self.val = val
-
-class BitBuffer:
-    def __init__(self, val: int = 0, bit_count: int = 0):
-        self.val = val
-        self.bit_count = bit_count
-    
-    # Returns a copy with the added bit
-    def append(self, bit: str):
-        cp = BitBuffer(self.val, self.bit_count)
-        bit = int(bit)
-
-        cp.val = cp.val * 2 + bit
-        cp.bit_count += 1
-
-        return cp
-    
-    def __str__(self):
-        return str(self.bit_count)
-
 
 class Huffman:
     def __init__(self, rle_stats):
