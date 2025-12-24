@@ -6,13 +6,15 @@ import cv2
 import os
 from queue import PriorityQueue, Queue
 from Huffman import Huffman
+from BitStream import BitBuffer
+from RLE import RLE, RLEHuffKey
+
 
 # I WILL ASSUME IMAGES ARE SQUARE SHAPED(NXN)
 # FOR NOW EVERYTHING IS IN MEMORY
 
-EOB = -1
-rle_freq = {} # Needed for huffman encoding
-    
+#TODO: Handle EOB better as it does not always occur when the block ends
+# It might also create problems when hashing
 
 def get_mse(initial, compressed):
     return (np.linalg.norm(initial - compressed) ** 2) / initial.size
@@ -32,77 +34,32 @@ def encode_block(block: np.ndarray, compr_scale: float = 1, stats_mode: bool=Fal
             [72, 92, 95, 98, 112, 100, 103, 99]])
     
     block_dctn = dctn(block)
-    block_dctn_jpeg = Q_jpeg*np.round(block_dctn/Q_jpeg)
+    block_dctn_jpeg = np.round(block_dctn/Q_jpeg)
 
     # Convert to zig-zag vec
     zig_zag = to_zig_zag_vec(block_dctn_jpeg)
     
     # Rule length encoding
-    rle = to_rle(zig_zag)
+    rle_vec = RLE.from_zig_zag_vec(zig_zag)
 
     if stats_mode:
-        update_rle_freq(rle)
+        RLE.update_rle_freq(rle_vec)
 
-    return rle
+    return rle_vec
 
-def decode_block(rle: list):
-    return idctn(from_zig_zag_vec(from_rle(rle)))
+# def decode_block(rle: list):
+#     return idctn(from_zig_zag_vec(from_rle(rle)))
 
-def update_rle_freq(rle_vec: list):
-    global rle_freq
-    last = rle_vec.pop()
+# Returns a BitBuffer that contains both the huffman encoding for the huff table key
+# and the non-zero value
+def rle_to_bit_buffer(huffman: Huffman, rle: RLE):
+    # print(f"\nRLE size before encoding: {rle.__sizeof__()} bytes!\n")
     
-    for zero_count, bit_count, _ in rle_vec:
-        p = (zero_count, bit_count)
-        if p in rle_freq:
-            rle_freq[p] += 1
-        else:
-            rle_freq[p] = 1
-    
-    # Don't forget about the last elem
-    if last != EOB:
-        last = (last[0], last[1])
-    
-    if last in rle_freq:
-        rle_freq[last] += 1
-    else:
-        rle_freq[last] = 1
+    huff_encoding = huffman.table[rle.get_huff_key()]
+    huff_encoding = huff_encoding.extend(rle.non_zero_val)
 
-
-# returns a vector of pairs in the form (zeros_count, bit_count_non_zero_value, non_zero_value)
-# negative values become (1 << val.bit_len) - 1 + abs(val)
-def to_rle(vec: np.ndarray):
-    rle = []
-    zero_count = 0
-
-    for elem in vec:
-        if elem == 0:
-            zero_count += 1
-        else:
-            elem = abs(elem)
-            bit_len = elem.bit_length()
-
-            if elem < 0:
-                elem = (1 << bit_len) - 1 + elem
-
-            rle.append((zero_count, bit_len, elem))
-            zero_count = 0
-
-    if zero_count > 0:
-        rle.append(EOB)
-    return rle
-
-def from_rle(rle: list):
-    res = []
-    trailing_zero_count = rle[-1]
-    rle.pop()
-
-    for z_count, non_z_v in rle:
-        res.extend([0] * z_count)
-        res.append(non_z_v)
-
-    res.extend([0] * trailing_zero_count)
-    return np.array(res, np.float64)
+    # print(f"\nRLE size after encoding: {huff_encoding.bit_count / BitBuffer.BYTE_SIZE} bytes!\n")
+    return huff_encoding
 
 def to_zig_zag_vec(mat: np.ndarray):
     mat_size = mat.shape[0]
@@ -130,12 +87,12 @@ def to_zig_zag_vec(mat: np.ndarray):
         res.append(mat[row][col])
         row, col = mov_func(row, col, min(it_count + 1, diag_count - it_count - 1), mat, res)
 
-    return np.array(res, np.float64)
+    return np.array(res, int)
 
 def from_zig_zag_vec(vec: np.ndarray):
     mat_size = int(np.sqrt(len(vec)))
     diag_count = 2 * mat_size - 2
-    mat = np.zeros((mat_size, mat_size), np.float64)
+    mat = np.zeros((mat_size, mat_size), np.int64)
 
     row, col = 0, 0
     vec_i = 0
@@ -197,10 +154,10 @@ def go_right_up_fill_vec(row:int, col:int, it_count:int, mat:np.ndarray, vec:lis
         vec.append(mat[row][col])
     return row, col
 
-
 # img should be have one channel
-# returns a list of compressed blocks representing the image
-def compress_img(img: np.ndarray, compr_scale: float = 1, stats_mode: bool = False):
+# returns the image as series of bytes, compressed
+def compress_img(img: np.ndarray, compr_scale: float = 1):
+    print(f"\nInitial image size: {img.__sizeof__()} bytes!\n")
     # Transform the image into a list of blocks
     # Each block is partially compressed just before huffman encoding
     h, w = img.shape[0], img.shape[1]
@@ -209,14 +166,35 @@ def compress_img(img: np.ndarray, compr_scale: float = 1, stats_mode: bool = Fal
     for i in range(0, h, block_size):
         for j in range(0, w, block_size):
             block = img[i:i + block_size, j:j+block_size]
-            block_list.append(encode_block(block, compr_scale, stats_mode))
+
+            block_list.append(encode_block(block, compr_scale, True))
+            
+            
+    print(f"\nEncoded all blocks to RLE\n")
 
     # Build huffman tree and table
-    huff = Huffman(rle_freq)
+    huff = Huffman(RLE.freq_dict)
+    print("\nConstructed huffman table and tree!\n")
     
-    block_list = np.squeeze(np.asarray([[huff.table[elem] for elem in block] for block in block_list]))
+    # First block
+    compr_image, rem = BitBuffer.from_list_to_bytes([rle_to_bit_buffer(huff, rle) for rle in block_list[0]])
 
-    return block_list
+    for i in range(1, len(block_list)):
+        # Transform every rle into a bit buffer
+        bit_buffers = [rem] + [rle_to_bit_buffer(huff, rle) for rle in block_list[i]] 
+        
+        # Transform the list of bit buffers into a list of bytes
+        compr_block, rem = BitBuffer.from_list_to_bytes(bit_buffers)
+
+        # Add it to the result
+        compr_image.extend(compr_block)
+
+    # Remaining bits
+    if rem.bit_count > 0:
+        compr_image.extend(rem.val)
+    
+    print(f"\nConverted list of bit buffers to bytearray: {compr_image.__sizeof__()} bytes")
+    return compr_image
 
 # def decompress_img(block_list: np.ndarray):
 #     for block in block_list
@@ -255,15 +233,4 @@ def task2(img: np.ndarray):
 
 img = datasets.ascent()
 # task1(img)
-task2(img)
-
-freq_of_freq = {}
-for k, v in rle_freq.items():
-    if v in freq_of_freq:
-        freq_of_freq[v] += 1
-    else:
-        freq_of_freq[v] = 1
-
-sorted_freq = sorted(freq_of_freq.items(), key=lambda x: -x[0])
-for k, v in sorted_freq:
-    print(k, v)
+task1(img)
