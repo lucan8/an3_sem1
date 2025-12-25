@@ -15,19 +15,30 @@ class BitBuffer:
         else:
             self.val = val
             self.bit_count = bit_count
-            if self.bit_count == 0:
-                self.bit_count = bit_length(self.val)
-            elif self.bit_count < bit_length(self.val):
-                raise RuntimeError("BitBuffer: Invalid argument: bit_count should be < val.bit_length()")
+
+            if self.val != 0: 
+                if self.bit_count == 0: # Use the "normal" bit length
+                    self.bit_count = bit_length(self.val)
+                elif self.bit_count < bit_length(self.val):
+                    raise RuntimeError("BitBuffer: Invalid argument: bit_count should be < val.bit_length()")
             
-    
     # Sets the bitbuffer when val is negative(please pass it only when negative!)
     def set_neg(self, val):
         abs_val = abs(val)
         self.bit_count = bit_length(abs_val)
 
-        val = (1 << self.bit_count) - 1 + val
+        val = BitBuffer.only_ones(self.bit_count) + val
         self.val = val
+    
+    def to_int(self):
+        msb1 = 1 << (self.bit_count - 1)
+
+        # Positive number
+        if self.val & msb1:
+            return self.val
+        
+        # Negative number
+        return self.val - BitBuffer.only_ones(self.bit_count)
     
     # Returns a copy with the added bit
     def append(self, bit: str):
@@ -60,6 +71,18 @@ class BitBuffer:
             res = res.extend(chunk[i])
         
         return res
+
+    # Converts a list of bytes to a bit buffer
+    @staticmethod
+    def from_bytes_to_bb(bytes: bytearray, last_byte_full: bool = True):
+        l = [BitBuffer(bytes[i], BitBuffer.BYTE_SIZE) for i in range(len(bytes) - 1)]
+
+        if last_byte_full:
+            l += [BitBuffer(bytes[-1], BitBuffer.BYTE_SIZE)]
+        else:
+            l += [BitBuffer(bytes[-1])]
+        
+        return BitBuffer.merge(l)
 
     # Converts a list of BitBuffer to a list of bytes
     # Also returns the remaining BitBuffer when not divisible by BYTE_SIZE
@@ -94,15 +117,27 @@ class BitBuffer:
 
         return result, rem
 
-    # Removes the first BYTE_SIZE from the buffer, left to right and returns the corresponding byte
-    def pop_byte(self):
-        rem_bits = self.bit_count - BitBuffer.BYTE_SIZE
+    # bit_count = 3 -> 111, but_count = 6 - > 111111 and so on
+    @staticmethod
+    def only_ones(bit_count: int) -> int:
+        return (1 << bit_count) - 1
 
-        byte = (self.val & (BitBuffer.BYTE_MAX_VAL << (rem_bits))) >> (rem_bits)
+    # Removes the first bits_count from the buffer, left to right and returns the corresponding value
+    def pop_bits(self, bit_count: int):
+        if bit_count > self.bit_count:
+            raise RuntimeError(f"BitBuffer: pop_bits: tried to pop too many bits")
+        
+        rem_bits = self.bit_count - bit_count
+
+        val = (self.val & (BitBuffer.only_ones(self.bit_count) << rem_bits)) >> rem_bits
         self.val = self.val & ((1 << (rem_bits)) - 1)
         self.bit_count = rem_bits
 
-        return byte
+        return val
+
+    # Calls pop_bits(BitBuffer.BYTE_SIZE)
+    def pop_byte(self):
+        return self.pop_bits(BitBuffer.BYTE_SIZE)
     
     # Calls pop_bytes until it can't and returns the resulting bytearray
     def pop_bytes(self):

@@ -13,8 +13,22 @@ from RLE import RLE, RLEHuffKey
 # I WILL ASSUME IMAGES ARE SQUARE SHAPED(NXN)
 # FOR NOW EVERYTHING IS IN MEMORY
 
+#CRITICAL: 
+# YOU MIGHT LOSE SOME 0 PADDING BITS ON THE LAST BYTE WHEN COMPRESSING
+# FAILS WHEN TAKING THE 64X64 IMAGE ON THE LAST BLOCK
+
+#SOLUTIONS:
+# ADD A 1 BIT TO THE LAST BYTE TO THE LEFT THEN REMOVE IT BEFORE CONVERTING TO BIT BUFFER
+
 #TODO: Handle EOB better as it does not always occur when the block ends
 # It might also create problems when hashing
+
+#TODO: Look whether you need to process the last block separately
+
+# The max size, in bits of a RLE after it has been encoded
+RLE_MAX_BIT_COUNT = 0
+
+huffman = None
 
 def get_mse(initial, compressed):
     return (np.linalg.norm(initial - compressed) ** 2) / initial.size
@@ -52,13 +66,20 @@ def encode_block(block: np.ndarray, compr_scale: float = 1, stats_mode: bool=Fal
 
 # Returns a BitBuffer that contains both the huffman encoding for the huff table key
 # and the non-zero value
-def rle_to_bit_buffer(huffman: Huffman, rle: RLE):
-    # print(f"\nRLE size before encoding: {rle.__sizeof__()} bytes!\n")
+# Also updates rle_max_bit_count if needed
+def rle_to_bit_buffer(huffman: Huffman, rle: RLE|int):
+    global RLE_MAX_BIT_COUNT
     
-    huff_encoding = huffman.table[rle.get_huff_key()]
-    huff_encoding = huff_encoding.extend(rle.non_zero_val)
+    # EOB only has huffman encoding
+    if rle == RLE.EOB:
+        return huffman.table[RLE.EOB]
+    
+    bb = BitBuffer(rle.non_zero_val)
+    huff_encoding = huffman.table[RLEHuffKey(rle.zero_count, bb.bit_count)]
+    huff_encoding = huff_encoding.extend(bb)
+    
+    RLE_MAX_BIT_COUNT = max(RLE_MAX_BIT_COUNT, huff_encoding.bit_count)
 
-    # print(f"\nRLE size after encoding: {huff_encoding.bit_count / BitBuffer.BYTE_SIZE} bytes!\n")
     return huff_encoding
 
 def to_zig_zag_vec(mat: np.ndarray):
@@ -66,7 +87,7 @@ def to_zig_zag_vec(mat: np.ndarray):
     diag_count = 2 * mat_size - 2
 
     row, col = 0, 0
-    res = [mat[row][col]]
+    res = [int(mat[row][col])]
     mov_func = None
 
     # Take every secondary diagonals
@@ -84,10 +105,10 @@ def to_zig_zag_vec(mat: np.ndarray):
                 col += 1
             mov_func = go_right_up_fill_vec
         
-        res.append(mat[row][col])
+        res.append(int(mat[row][col]))
         row, col = mov_func(row, col, min(it_count + 1, diag_count - it_count - 1), mat, res)
 
-    return np.array(res, int)
+    return res
 
 def from_zig_zag_vec(vec: np.ndarray):
     mat_size = int(np.sqrt(len(vec)))
@@ -143,7 +164,7 @@ def go_right_up_fill_mat(row:int, col:int, it_count:int, mat:np.ndarray, vec:np.
 def go_left_down_fill_vec(row:int, col:int, it_count:int, mat:np.ndarray, vec:list[int]):
     for _ in range(it_count):
         row, col = row + 1, col - 1
-        vec.append(mat[row][col])
+        vec.append(int(mat[row][col]))
     return row, col
 
 # Moves right and up from row, col to col, row, adding the values in mat to vec
@@ -151,12 +172,13 @@ def go_left_down_fill_vec(row:int, col:int, it_count:int, mat:np.ndarray, vec:li
 def go_right_up_fill_vec(row:int, col:int, it_count:int, mat:np.ndarray, vec:list[int]):
     for _ in range(it_count):
         row, col = row - 1, col + 1
-        vec.append(mat[row][col])
+        vec.append(int(mat[row][col]))
     return row, col
 
 # img should be have one channel
 # returns the image as series of bytes, compressed
 def compress_img(img: np.ndarray, compr_scale: float = 1):
+    global huffman
     print(f"\nInitial image size: {img.__sizeof__()} bytes!\n")
     # Transform the image into a list of blocks
     # Each block is partially compressed just before huffman encoding
@@ -173,15 +195,16 @@ def compress_img(img: np.ndarray, compr_scale: float = 1):
     print(f"\nEncoded all blocks to RLE\n")
 
     # Build huffman tree and table
-    huff = Huffman(RLE.freq_dict)
+    huffman = Huffman(RLE.freq_dict)
     print("\nConstructed huffman table and tree!\n")
     
+    # Transform RLEs into a bytearray
     # First block
-    compr_image, rem = BitBuffer.from_list_to_bytes([rle_to_bit_buffer(huff, rle) for rle in block_list[0]])
+    compr_image, rem = BitBuffer.from_list_to_bytes([rle_to_bit_buffer(huffman, rle) for rle in block_list[0]])
 
     for i in range(1, len(block_list)):
         # Transform every rle into a bit buffer
-        bit_buffers = [rem] + [rle_to_bit_buffer(huff, rle) for rle in block_list[i]] 
+        bit_buffers = [rem] + [rle_to_bit_buffer(huffman, rle) for rle in block_list[i]] 
         
         # Transform the list of bit buffers into a list of bytes
         compr_block, rem = BitBuffer.from_list_to_bytes(bit_buffers)
@@ -189,19 +212,93 @@ def compress_img(img: np.ndarray, compr_scale: float = 1):
         # Add it to the result
         compr_image.extend(compr_block)
 
+    assert(rem.bit_count <= BitBuffer.BYTE_SIZE)
     # Remaining bits
     if rem.bit_count > 0:
-        compr_image.extend(rem.val)
+        compr_image.append(rem.val)
     
     print(f"\nConverted list of bit buffers to bytearray: {compr_image.__sizeof__()} bytes")
-    return compr_image
+    return block_list, compr_image
 
-# def decompress_img(block_list: np.ndarray):
-#     for block in block_list
+# Returns a rle object and the remaining bb
+def from_bb_to_rle(bit_buffer: BitBuffer) -> tuple[RLE|int, BitBuffer]:
+    # Process huffman encoding to get the zero count and bit length of the following non-zero val
+    rle_huff_key = huffman.get_rle_huff_key(bit_buffer)
+
+    # Early return for EOB
+    if rle_huff_key == RLE.EOB:
+        return RLE.EOB, bit_buffer
+    
+    # Read the non-zero value
+    nz_val = bit_buffer.pop_bits(rle_huff_key.bit_count)
+
+    # Convert to int
+    nz_val = BitBuffer(nz_val, rle_huff_key.bit_count).to_int()
+
+    return RLE(rle_huff_key.zero_count, nz_val), bit_buffer
+
+# Converts a bytearray to a list of blocks, each block being a list of rles
+# Would benefit from nicer code!
+def from_bytes_to_rle_blocks(bytes: bytearray) -> list[list[RLE|int]]:
+    global RLE_MAX_BIT_COUNT
+
+    # We will always read the max size of a RLE to make sure we read enough to process
+    byte_step = (RLE_MAX_BIT_COUNT // BitBuffer.BYTE_SIZE) + (RLE_MAX_BIT_COUNT % BitBuffer.BYTE_SIZE > 0)
+    
+    # Convert byte array to rles
+    # First rle
+    rem = BitBuffer.from_bytes_to_bb(bytes[:byte_step])
+    rle, rem = from_bb_to_rle(rem)
+
+    # A list of blocks which are represented as lists of RLE
+    rle_blocks = [[rle]]
+
+    i = 0
+    # Read chunks of bytes, convert to bb and then to rles
+    for i in range(byte_step, len(bytes) - byte_step, byte_step):
+        rle, rem = from_bb_to_rle(rem.extend(BitBuffer.from_bytes_to_bb(bytes[i:i + byte_step])))
+        rle_blocks[-1].append(rle)
+
+        # End of block, create new one
+        if rle == RLE.EOB:
+            rle_blocks.append([])
+    
+    # Last byte chunk
+    rle, rem = from_bb_to_rle(rem.extend(BitBuffer.from_bytes_to_bb(bytes[i + byte_step:], False)))
+    rle_blocks[-1].append(rle)
+
+    # End of block, create new one
+    if rle == RLE.EOB:
+        rle_blocks.append([])
+    
+    # We surely have more rles to process from rem
+    while rem.bit_count > 0:
+        rle, rem = from_bb_to_rle(rem)
+        rle_blocks[-1].append(rle)
+
+        # End of block, create new one
+        if rle == RLE.EOB:
+            rle_blocks.append([])
+    
+    return rle_blocks
+
+
+def decompress_img(bytes: bytearray):
+    block_list = from_bytes_to_rle_blocks(bytes)
+
+    return block_list
+
 
 def task1(img: np.ndarray):
-    img_jpeg = compress_img(img)
+    block_list, img_jpeg = compress_img(img[:128,:128].copy())
 
+    img_dec = decompress_img(img_jpeg)
+
+    for i in range(len(block_list)):
+        for j in range(len(block_list[i])):
+            if block_list[i][j] != img_dec[i][j]:
+                print(i, j)
+                break 
     fig, axs = plt.subplots(2)
     axs[0].imshow(img, cmap=plt.cm.gray)
     axs[1].imshow(img_jpeg, cmap=plt.cm.gray)

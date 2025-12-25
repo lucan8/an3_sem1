@@ -1,6 +1,10 @@
 from queue import PriorityQueue, Queue
 from BitStream import BitBuffer
+from RLE import RLEHuffKey
 import itertools
+
+#DONT FORGET LEFT IS 0 RIGHT IS 1! 
+
 
 class HuffmanNode:
     def __init__(self, left, right):
@@ -71,3 +75,17 @@ class Huffman:
 
         print("\nHuffman Table build\n")
         return table
+    
+    # Traverses the tree, consuming bits from bit_buffer until a leaf is reached
+    # Returns the value of the leaf
+    def get_rle_huff_key(self, bit_buffer: BitBuffer) -> RLEHuffKey|int:
+        curr = self.tree_root
+
+        while isinstance(curr, HuffmanNode):
+            bit = bit_buffer.pop_bits(1)
+            if bit == 0:
+                curr = curr.left
+            else:
+                curr = curr.right
+
+        return curr.val
