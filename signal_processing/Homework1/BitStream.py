@@ -21,7 +21,20 @@ class BitBuffer:
                     self.bit_count = bit_length(self.val)
                 elif self.bit_count < bit_length(self.val):
                     raise RuntimeError("BitBuffer: Invalid argument: bit_count should be < val.bit_length()")
-            
+
+    # Returns the value padded with one_count ones to the right
+    # If the def argument is used, pad in order to create a full byte
+    def pad_with_ones_right(self, one_count: int = -1):
+        added_bits = one_count
+        
+        # Add BYTE_SIZE - self.bit_count ones
+        if one_count == -1:
+            added_bits = BitBuffer.BYTE_SIZE - self.bit_count
+            if added_bits < 0:
+                raise RuntimeError("BitBuffer: pad_with_ones_right: tried to pad to create a byte but it's bigger than a byte!")
+        
+        return (self.val << added_bits) + BitBuffer.only_ones(added_bits)
+        
     # Sets the bitbuffer when val is negative(please pass it only when negative!)
     def set_neg(self, val):
         abs_val = abs(val)
@@ -151,17 +164,3 @@ class BitBuffer:
     def __str__(self):
         actual_bit_count = bit_length(self.val)
         return '0' * (self.bit_count - actual_bit_count) + bin(self.val)
-    
-# THIS WILL BECOME RELEVANT WHEN(IF) I DECIDE TO ACTUALLY USE FILES
-#TODO: Look into byte stuffing
-#TODO: Add functionality for cummulation
-# class BitStreamWriter:
-#     def __init__(self, filename: str):
-#         self.bit_buffer = BitBuffer()
-#         self.file = open(filename, 'wb')
-    
-#     # Extend inner bit buffer, extract and write bytes
-#     def write(self, bit_buffer: BitBuffer):
-#         self.bit_buffer = self.bit_buffer.extend(bit_buffer)
-        
-#         self.file.write(self.bit_buffer.pop_bytes())

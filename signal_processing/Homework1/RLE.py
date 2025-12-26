@@ -24,8 +24,7 @@ class RLE:
                 rle.append(RLE(zero_count, elem))
                 zero_count = 0
 
-        if zero_count > 0:
-            rle.append(RLE.EOB)
+        rle.append(RLE.EOB)
 
         return rle
     

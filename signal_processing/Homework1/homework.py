@@ -13,6 +13,7 @@ from RLE import RLE, RLEHuffKey
 # I WILL ASSUME IMAGES ARE SQUARE SHAPED(NXN)
 # FOR NOW EVERYTHING IS IN MEMORY
 
+#TODO: Ask chat why using 1 padding is better than 0 padding or any padding really
 #CRITICAL: 
 # YOU MIGHT LOSE SOME 0 PADDING BITS ON THE LAST BYTE WHEN COMPRESSING
 # FAILS WHEN TAKING THE 64X64 IMAGE ON THE LAST BLOCK
@@ -29,6 +30,8 @@ from RLE import RLE, RLEHuffKey
 RLE_MAX_BIT_COUNT = 0
 
 huffman = None
+img_h = None # image height, it's expected to be equal to width
+block_h = 8 # blcok height, it's expected to be equal to width
 
 def get_mse(initial, compressed):
     return (np.linalg.norm(initial - compressed) ** 2) / initial.size
@@ -178,16 +181,16 @@ def go_right_up_fill_vec(row:int, col:int, it_count:int, mat:np.ndarray, vec:lis
 # img should be have one channel
 # returns the image as series of bytes, compressed
 def compress_img(img: np.ndarray, compr_scale: float = 1):
-    global huffman
+    global block_h, huffman
+
     print(f"\nInitial image size: {img.__sizeof__()} bytes!\n")
     # Transform the image into a list of blocks
     # Each block is partially compressed just before huffman encoding
     h, w = img.shape[0], img.shape[1]
-    block_size = 8
     block_list = []
-    for i in range(0, h, block_size):
-        for j in range(0, w, block_size):
-            block = img[i:i + block_size, j:j+block_size]
+    for i in range(0, h, block_h):
+        for j in range(0, w, block_h):
+            block = img[i:i + block_h, j:j+block_h]
 
             block_list.append(encode_block(block, compr_scale, True))
             
@@ -213,12 +216,13 @@ def compress_img(img: np.ndarray, compr_scale: float = 1):
         compr_image.extend(compr_block)
 
     assert(rem.bit_count <= BitBuffer.BYTE_SIZE)
+
     # Remaining bits
     if rem.bit_count > 0:
-        compr_image.append(rem.val)
+        compr_image.append(rem.pad_with_ones_right())
     
     print(f"\nConverted list of bit buffers to bytearray: {compr_image.__sizeof__()} bytes")
-    return block_list, compr_image
+    return compr_image
 
 # Returns a rle object and the remaining bb
 def from_bb_to_rle(bit_buffer: BitBuffer) -> tuple[RLE|int, BitBuffer]:
@@ -240,46 +244,34 @@ def from_bb_to_rle(bit_buffer: BitBuffer) -> tuple[RLE|int, BitBuffer]:
 # Converts a bytearray to a list of blocks, each block being a list of rles
 # Would benefit from nicer code!
 def from_bytes_to_rle_blocks(bytes: bytearray) -> list[list[RLE|int]]:
-    global RLE_MAX_BIT_COUNT
+    global RLE_MAX_BIT_COUNT, img_h
 
-    # We will always read the max size of a RLE to make sure we read enough to process
-    byte_step = (RLE_MAX_BIT_COUNT // BitBuffer.BYTE_SIZE) + (RLE_MAX_BIT_COUNT % BitBuffer.BYTE_SIZE > 0)
+    # Determine the expected number of blocks of the initial image
+    block_count = (img_h * img_h) // (block_h * block_h) 
     
     # Convert byte array to rles
-    # First rle
-    rem = BitBuffer.from_bytes_to_bb(bytes[:byte_step])
-    rle, rem = from_bb_to_rle(rem)
 
-    # A list of blocks which are represented as lists of RLE
-    rle_blocks = [[rle]]
+    # Prepare stuff
+    rem = BitBuffer()
+    rle_blocks = [[] for _ in range(block_count)]
+    rle_block_i = 0
+    byte_i = 0
 
-    i = 0
-    # Read chunks of bytes, convert to bb and then to rles
-    for i in range(byte_step, len(bytes) - byte_step, byte_step):
-        rle, rem = from_bb_to_rle(rem.extend(BitBuffer.from_bytes_to_bb(bytes[i:i + byte_step])))
-        rle_blocks[-1].append(rle)
-
-        # End of block, create new one
-        if rle == RLE.EOB:
-            rle_blocks.append([])
-    
-    # Last byte chunk
-    rle, rem = from_bb_to_rle(rem.extend(BitBuffer.from_bytes_to_bb(bytes[i + byte_step:], False)))
-    rle_blocks[-1].append(rle)
-
-    # End of block, create new one
-    if rle == RLE.EOB:
-        rle_blocks.append([])
-    
-    # We surely have more rles to process from rem
-    while rem.bit_count > 0:
+    # Process until all the blocks were recreated
+    while rle_block_i < block_count:
+        # Merge bytes until we are sure we have enough bits to process a RLE
+        while byte_i < len(bytes) and rem.bit_count < RLE_MAX_BIT_COUNT:
+            rem = rem.extend(BitBuffer(bytes[byte_i], BitBuffer.BYTE_SIZE))
+            byte_i += 1
+        
+        # Tranform the bitstream into a RLE
         rle, rem = from_bb_to_rle(rem)
-        rle_blocks[-1].append(rle)
-
-        # End of block, create new one
+        rle_blocks[rle_block_i].append(rle)
+        
+        # Go to next block
         if rle == RLE.EOB:
-            rle_blocks.append([])
-    
+            rle_block_i += 1
+        
     return rle_blocks
 
 
@@ -290,15 +282,21 @@ def decompress_img(bytes: bytearray):
 
 
 def task1(img: np.ndarray):
-    block_list, img_jpeg = compress_img(img[:128,:128].copy())
+    global img_h
+
+    img_h = img.shape[0]
+
+    img_jpeg = compress_img(img)
 
     img_dec = decompress_img(img_jpeg)
 
-    for i in range(len(block_list)):
-        for j in range(len(block_list[i])):
-            if block_list[i][j] != img_dec[i][j]:
-                print(i, j)
-                break 
+    # for i in range(len(block_list)):
+    #     for j in range(len(block_list[i])):
+    #         if block_list[i][j] != img_dec[i][j]:
+    #             print(i, j)
+    #             exit(1)
+    
+    
     fig, axs = plt.subplots(2)
     axs[0].imshow(img, cmap=plt.cm.gray)
     axs[1].imshow(img_jpeg, cmap=plt.cm.gray)
