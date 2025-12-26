@@ -8,23 +8,14 @@ from queue import PriorityQueue, Queue
 from Huffman import Huffman
 from BitStream import BitBuffer
 from RLE import RLE, RLEHuffKey
+from ZigZagVec import to_zig_zag_vec, from_zig_zag_vec
 
-
+#TODO: REFACTOR+OPTIMIZATION: FOR BOTH COMPRESS AND DECOMPRESS
+# ELIMINATE ENCODE/DECODE AND KEEP ALL OPERATIONS IN THE SAME FUNCTION, USE VECTORIZATION FOR EACH STEP
 # I WILL ASSUME IMAGES ARE SQUARE SHAPED(NXN)
 # FOR NOW EVERYTHING IS IN MEMORY
 
-#TODO: Ask chat why using 1 padding is better than 0 padding or any padding really
-#CRITICAL: 
-# YOU MIGHT LOSE SOME 0 PADDING BITS ON THE LAST BYTE WHEN COMPRESSING
-# FAILS WHEN TAKING THE 64X64 IMAGE ON THE LAST BLOCK
-
-#SOLUTIONS:
-# ADD A 1 BIT TO THE LAST BYTE TO THE LEFT THEN REMOVE IT BEFORE CONVERTING TO BIT BUFFER
-
-#TODO: Handle EOB better as it does not always occur when the block ends
-# It might also create problems when hashing
-
-#TODO: Look whether you need to process the last block separately
+# TODO: WHY DOES DOING CHANNEL WISE MSE AVERAGE DIFFER FROM THE GLOBAL ONE? 
 
 # The max size, in bits of a RLE after it has been encoded
 RLE_MAX_BIT_COUNT = 0
@@ -45,170 +36,26 @@ Q_JPEG = np.array(
         [49, 64, 78, 87, 103, 121, 120, 101],
         [72, 92, 95, 98, 112, 100, 103, 99]])
 
-def get_mse(initial, compressed):
-    return (np.linalg.norm(initial - compressed) ** 2) / initial.size
-
-# Encodes a 8x8 block into a rle vector
-# Stats mode also tracks the appearance frequency of rle elements
-def encode_block(block: np.ndarray, compr_scale: float = 1, stats_mode: bool=False):
-    global Q_JPEG
-    h, w = block.shape
-
-    # Scale quantization matrix
-    Q_jpeg_scaled = compr_scale * Q_JPEG
-    
-    # Apply cosine transform and devide by quantization matrix
-    block_dctn = dctn(block)
-    block_dctn_jpeg = np.round(block_dctn/Q_jpeg_scaled)
-
-    # Convert to zig-zag vec
-    zig_zag = to_zig_zag_vec(block_dctn_jpeg)
-    
-    # Rule length encoding
-    rle_vec = RLE.from_zig_zag_vec(zig_zag)
-
-    if stats_mode:
-        RLE.update_rle_freq(rle_vec)
-
-    return rle_vec
-
-# def decode_block(rle: list):
-#     return idctn(from_zig_zag_vec(from_rle(rle)))
-
-# Returns a BitBuffer that contains both the huffman encoding for the huff table key
-# and the non-zero value
-# Also updates rle_max_bit_count if needed
-def rle_to_bit_buffer(huffman: Huffman, rle: RLE|int):
-    global RLE_MAX_BIT_COUNT
-    
-    # EOB only has huffman encoding
-    if rle == RLE.EOB:
-        return huffman.table[RLE.EOB]
-    
-    bb = BitBuffer(rle.non_zero_val)
-    huff_encoding = huffman.table[RLEHuffKey(rle.zero_count, bb.bit_count)]
-    huff_encoding = huff_encoding.extend(bb)
-    
-    RLE_MAX_BIT_COUNT = max(RLE_MAX_BIT_COUNT, huff_encoding.bit_count)
-
-    return huff_encoding
-
-def to_zig_zag_vec(mat: np.ndarray):
-    mat_size = mat.shape[0]
-    diag_count = 2 * mat_size - 2
-
-    row, col = 0, 0
-    res = [int(mat[row][col])]
-    mov_func = None
-
-    # Take every secondary diagonals
-    for it_count in range(diag_count):
-        if it_count % 2 == 0:
-            if col + 1 < mat_size:
-                col += 1
-            else:
-                row += 1
-            mov_func = go_left_down_fill_vec
-        else:
-            if row + 1 < mat_size:
-                row += 1
-            else:
-                col += 1
-            mov_func = go_right_up_fill_vec
-        
-        res.append(int(mat[row][col]))
-        row, col = mov_func(row, col, min(it_count + 1, diag_count - it_count - 1), mat, res)
-
-    return res
-
-def from_zig_zag_vec(vec: list[int]):
-    mat_size = int(np.sqrt(len(vec)))
-    diag_count = 2 * mat_size - 2
-    mat = np.zeros((mat_size, mat_size), np.int64)
-
-    row, col = 0, 0
-    vec_i = 0
-    mat[row][col] = vec[vec_i]
-    mov_func = None
-
-    # Take every secondary diagonals
-    for it_count in range(diag_count):
-        if it_count % 2 == 0:
-            if col + 1 < mat_size:
-                col += 1
-            else:
-                row += 1
-            mov_func = go_left_down_fill_mat
-        else:
-            if row + 1 < mat_size:
-                row += 1
-            else:
-                col += 1
-            mov_func = go_right_up_fill_mat
-        
-        vec_i += 1
-        mat[row][col] = vec[vec_i]
-        row, col, vec_i = mov_func(row, col, min(it_count + 1, diag_count - it_count - 1), mat, vec, vec_i)
-
-    return mat
-
-# Moves right and up from row, col to col, row, setting the values in mat to the corresponding ones from res
-# Returns the new row and col
-def go_left_down_fill_mat(row:int, col:int, it_count:int, mat:np.ndarray, vec:list[int], vec_i: int):
-    for _ in range(it_count):
-        vec_i += 1
-        row, col = row + 1, col - 1
-        mat[row][col] = vec[vec_i]
-    return row, col, vec_i
-
-# Moves right and up from row, col to col, row, setting the values in mat to the corvecponding ones from vec
-# Returns the new row and col
-def go_right_up_fill_mat(row:int, col:int, it_count:int, mat:np.ndarray, vec:list[int], vec_i: int):
-    for _ in range(it_count):
-        vec_i += 1
-        row, col = row - 1, col + 1
-        mat[row][col] = vec[vec_i]
-    return row, col, vec_i
-
-# Moves left and down from row, col to col, row, adding the values in mat to vec
-# Returns the new row and col
-def go_left_down_fill_vec(row:int, col:int, it_count:int, mat:np.ndarray, vec:list[int]):
-    for _ in range(it_count):
-        row, col = row + 1, col - 1
-        vec.append(int(mat[row][col]))
-    return row, col
-
-# Moves right and up from row, col to col, row, adding the values in mat to vec
-# Returns the new row and col
-def go_right_up_fill_vec(row:int, col:int, it_count:int, mat:np.ndarray, vec:list[int]):
-    for _ in range(it_count):
-        row, col = row - 1, col + 1
-        vec.append(int(mat[row][col]))
-    return row, col
-
-# img should be have one channel
-# returns the image as series of bytes, compressed
-def compress_img(img: np.ndarray, compr_scale: float = 1):
-    global block_h, huffman
-
-    print(f"\nInitial image size: {img.__sizeof__()} bytes!\n")
+# Splits the image into blocks, calls encode_block and returns the resulting list of blocks
+def from_image_to_rle_vec_blocks(img: np.ndarray, compr_scale: float = 1) -> list[list[RLE|int]]:
     # Transform the image into a list of blocks
     # Each block is partially compressed just before huffman encoding
     h, w = img.shape[0], img.shape[1]
+    Q_JPEG_scaled = Q_JPEG * compr_scale
     block_list = []
+
     for i in range(0, h, block_h):
         for j in range(0, w, block_h):
             block = img[i:i + block_h, j:j+block_h]
 
-            block_list.append(encode_block(block, compr_scale, True))
-            
-            
-    print(f"\nEncoded all blocks to RLE\n")
+            block_list.append(encode_block(block, Q_JPEG_scaled, True))
 
-    # Build huffman tree and table
-    huffman = Huffman(RLE.freq_dict)
-    print("\nConstructed huffman table and tree!\n")
-    
+    return block_list
+
+# Tranform the block list into a byte array, using huffman encoding for RLE
+def from_rle_vec_blocks_to_bytes(block_list: list[list[RLE|int]]):
+    global huffman
+
     # Transform RLEs into a bytearray
     # First block
     compr_image, rem = BitBuffer.from_list_to_bytes([rle_to_bit_buffer(huffman, rle) for rle in block_list[0]])
@@ -229,8 +76,97 @@ def compress_img(img: np.ndarray, compr_scale: float = 1):
     if rem.bit_count > 0:
         compr_image.append(rem.pad_with_ones_right())
     
-    print(f"\nConverted list of bit buffers to bytearray: {compr_image.__sizeof__()} bytes")
     return compr_image
+    
+
+# img should be have one channel
+# returns the image as series of bytes, compressed
+def compress_img(img: np.ndarray, compr_scale: float = 1):
+    global block_h, huffman
+    print(f"\nInitial image size: {img.__sizeof__()} bytes!\n")
+
+    block_list = from_image_to_rle_vec_blocks(img, compr_scale)
+    print(f"\nEncoded all blocks to RLE\n")
+
+    # Build huffman tree and table
+    huffman = Huffman(RLE.freq_dict)
+    print("\nConstructed huffman table and tree!\n")
+    
+    compr_img = from_rle_vec_blocks_to_bytes(block_list)
+    print(f"\nConverted list of bit buffers to bytearray: {compr_img.__sizeof__()} bytes")
+    
+    return compr_img
+
+# bytes: compressed image
+# Returns the initial image
+def decompress_img(bytes: bytearray, compr_scale: float = 1):
+    global block_size
+    
+    block_list = from_bytes_to_rle_blocks(bytes)
+
+    Q_JPEG_scaled = Q_JPEG * compr_scale
+
+    # Create the image from the blocks
+    img = np.zeros((img_h, img_h))
+
+    h, w = img.shape[0], img.shape[1]
+    block_i = 0
+
+    for i in range(0, h, block_h):
+        for j in range(0, w, block_h):
+            img[i:i + block_h, j:j+block_h] = decode_block(block_list[block_i], Q_JPEG_scaled)
+            block_i += 1
+
+    return img
+
+# Encodes a 8x8 block into a rle vector
+# Stats mode also tracks the appearance frequency of rle elements
+def encode_block(block: np.ndarray, Q_jpeg_scaled: np.ndarray, stats_mode: bool=False):
+    # Apply cosine transform and devide by quantization matrix
+    block_dctn = dctn(block)
+    block_dctn_jpeg = np.round(block_dctn/Q_jpeg_scaled)
+
+    # Convert to zig-zag vec and then to run length encodings vec
+    zig_zag = to_zig_zag_vec(block_dctn_jpeg)
+    rle_vec = RLE.from_zig_zag_vec(zig_zag)
+
+    # Stats needed to build huffman table
+    if stats_mode:
+        RLE.update_rle_freq(rle_vec)
+
+    return rle_vec
+
+# Converts a rle vector to the image patch it represents
+def decode_block(block: list[RLE|int], Q_jpeg_scaled: np.ndarray):
+    global block_size
+
+    # Convert rle vectors to zig-zag and back matrix block
+    block = RLE.to_zig_zag_vec(block, block_size)
+    block = from_zig_zag_vec(block)
+
+    # Multiply with quantization matrix and apply cosine tranform inverse
+    block = np.array(block, np.float64) * Q_jpeg_scaled
+    block = np.astype(idctn(block), np.uint8)
+
+    return block
+
+# Returns a BitBuffer that contains both the huffman encoding for the huff table key
+# and the non-zero value
+# Also updates rle_max_bit_count if needed
+def rle_to_bit_buffer(huffman: Huffman, rle: RLE|int):
+    global RLE_MAX_BIT_COUNT
+    
+    # EOB only has huffman encoding
+    if rle == RLE.EOB:
+        return huffman.table[RLE.EOB]
+    
+    bb = BitBuffer(rle.non_zero_val)
+    huff_encoding = huffman.table[RLEHuffKey(rle.zero_count, bb.bit_count)]
+    huff_encoding = huff_encoding.extend(bb)
+    
+    RLE_MAX_BIT_COUNT = max(RLE_MAX_BIT_COUNT, huff_encoding.bit_count)
+
+    return huff_encoding
 
 # Returns a rle object and the remaining bb
 def from_bb_to_rle(bit_buffer: BitBuffer) -> tuple[RLE|int, BitBuffer]:
@@ -250,7 +186,6 @@ def from_bb_to_rle(bit_buffer: BitBuffer) -> tuple[RLE|int, BitBuffer]:
     return RLE(rle_huff_key.zero_count, nz_val), bit_buffer
 
 # Converts a bytearray to a list of blocks, each block being a list of rles
-# Would benefit from nicer code!
 def from_bytes_to_rle_blocks(bytes: bytearray) -> list[list[RLE|int]]:
     global RLE_MAX_BIT_COUNT, img_h
 
@@ -282,79 +217,105 @@ def from_bytes_to_rle_blocks(bytes: bytearray) -> list[list[RLE|int]]:
         
     return rle_blocks
 
-# Converts a rle vector to the image patch it represents
-def decode_block(block: list[RLE|int]):
-    global block_size
+def get_mse(initial, compressed):
+    return (np.linalg.norm(initial - compressed) ** 2) / initial.size
 
-    # Convert rle vectors to zig-zag and back matrix block
-    block = RLE.to_zig_zag_vec(block, block_size)
-    block = from_zig_zag_vec(block)
-
-    # Multiply with quantization matrix and apply cosine tranform inverse
-    block *= Q_JPEG
-    block = np.astype(idctn(block), np.uint8)
-
-    return block
-
-
-def decompress_img(bytes: bytearray):
-    global block_size
-    block_list = from_bytes_to_rle_blocks(bytes)
-
-    block_list = [decode_block(block) for block in block_list]
-
-    # Create the image from the blocks
-    img = np.zeros((img_h, img_h))
-
-    h, w = img.shape[0], img.shape[1]
-    block_i = 0
-
-    for i in range(0, h, block_h):
-        for j in range(0, w, block_h):
-            img[i:i + block_h, j:j+block_h] = block_list[block_i]
-            block_i += 1
-
-    return img
-
-def task1(img: np.ndarray):
+def compr_decompr_for_one_ch(img: np.ndarray, compr_scale: float = 1):
     global img_h
 
     img = img.copy()
     img_h = img.shape[0]
 
-    img_jpeg = compress_img(img)
+    img_jpeg = decompress_img(compress_img(img, compr_scale), compr_scale)
+    mse = get_mse(img, img_jpeg)
 
-    img_dec = decompress_img(img_jpeg)
+    return img_jpeg, mse
+
+def task1(img: np.ndarray):
+    img_jpeg, mse = compr_decompr_for_one_ch(img)
     
     fig, axs = plt.subplots(2)
     axs[0].imshow(img, cmap=plt.cm.gray)
-    axs[1].imshow(img_dec, cmap=plt.cm.gray)
+    axs[1].imshow(img_jpeg, cmap=plt.cm.gray)
     plt.show()
 
-    print(f"err={get_mse(img, img_dec)}")
+    print(f"mse={mse}")
+
+def compr_decompr_for_colored(img_ycrcb: np.ndarray, compr_scale: float = 1):
+    # Split by channel
+    img_y, img_cr, img_cb = img_ycrcb[:, :, 0], img_ycrcb[:, :, 1], img_ycrcb[:, :, 2]
+
+    # Apply compression and decompression on every channel
+    img_y_jpeg, mse_y = compr_decompr_for_one_ch(img_y, compr_scale)
+    img_cr_jpeg, mse_cr = compr_decompr_for_one_ch(img_cr, compr_scale)
+    img_cb_jpeg, mse_cb = compr_decompr_for_one_ch(img_cb, compr_scale)
+
+    print(mse_y, mse_cr, mse_cb)
+
+    # Put them back together
+    img_ycrcb_jpeg = img_ycrcb.copy()
+    img_ycrcb_jpeg[:, :, 0], img_ycrcb_jpeg[:, :, 1], img_ycrcb_jpeg[:, :, 2] = img_y_jpeg, img_cr_jpeg, img_cb_jpeg
+
+    return img_ycrcb_jpeg, get_mse(img_ycrcb, img_ycrcb_jpeg)
 
 def task2(img: np.ndarray):
     # Convert image to ycrcb
     img_bgr = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
     img_ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCR_CB)
-
-    # Split by channel
-    img_y, img_cr, img_cb = img_ycrcb[:, :, 0], img_ycrcb[:, :, 1], img_ycrcb[:, :, 2]
-
-    # Apply compression on every channel
-    img_y_jpeg, img_cr_jpeg, img_cb_jpeg = compress_img(img_y), compress_img(img_cr), compress_img(img_cb)
-
-    # Put them back together
-    img_ycrc_jpeg = img_ycrcb.copy()
-    img_ycrc_jpeg[:, :, 0], img_ycrc_jpeg[:, :, 1], img_ycrc_jpeg[:, :, 2] = img_y_jpeg, img_cr_jpeg, img_cb_jpeg
+    
+    img_ycrcb_jpeg, mse = compr_decompr_for_colored(img_ycrcb)
 
     fig, axs = plt.subplots(2)
     axs[0].imshow(img_ycrcb)
-    axs[1].imshow(img_ycrc_jpeg)
+    axs[1].imshow(img_ycrcb_jpeg)
     plt.show()
 
-    print(f"err={get_mse(img_ycrcb, img_ycrc_jpeg)}")
+    print(f"mse={mse}")
+    
+    return img_ycrcb_jpeg, mse
+
+# Search for the quatization factor that gives the closest mse to the threshold that is smaller than it
+def compr_decompr_until_thresh(img: np.ndarray, mse_thresh: np.float64):
+    if len(img.shape) == 2:
+        compr_func = compr_decompr_for_one_ch
+    elif img.shape[2] == 3:
+        compr_func = compr_decompr_for_colored
+    
+    # Binary search the quantization factor
+    # decompress + compress, check mse, update factor
+    lower_b, upper_b = 0, 100
+    chosen_img_jpeg, chosen_mse = None, np.inf
+    mse_range = mse_thresh / 10
+    while lower_b <= upper_b:
+        mid = (lower_b + upper_b) / 2
+        
+        img_jpeg, mse = compr_func(img, mid)
+        print(f"MSE: {mse}, scale: {mid}")
+
+        if mse <= mse_thresh: # Below threshold, go right and keep track of it
+            lower_b = mid
+            chosen_img_jpeg, chosen_mse = img_jpeg, mse
+            if mse_thresh - mse < mse_range:
+                break
+        else: # Above threshold, go left
+            upper_b = mid
+    
+    return chosen_img_jpeg, chosen_mse
+
+def task3(img: np.ndarray, mse_thresh: np.float64, colored: bool = True):
+    # If colored desired, convert to ycrcb
+    if colored:
+        img_bgr = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCR_CB)
+    
+    img_jpeg, mse = compr_decompr_until_thresh(img, mse_thresh)
+    fig, axs = plt.subplots(2)
+    axs[0].imshow(img)
+    axs[1].imshow(img_jpeg)
+    plt.show()
+
+    print(f"mse={mse}")
 
 img = datasets.ascent()
 # task1(img)
-task1(img)
+task3(img, 4, False)
