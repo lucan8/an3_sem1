@@ -32,6 +32,18 @@ RLE_MAX_BIT_COUNT = 0
 huffman = None
 img_h = None # image height, it's expected to be equal to width
 block_h = 8 # blcok height, it's expected to be equal to width
+block_size = block_h * block_h
+
+# Quantization matrix
+Q_JPEG = np.array(
+        [[16, 11, 10, 16, 24, 40, 51, 61],
+        [12, 12, 14, 19, 26, 28, 60, 55],
+        [14, 13, 16, 24, 40, 57, 69, 56],
+        [14, 17, 22, 29, 51, 87, 80, 62],
+        [18, 22, 37, 56, 68, 109, 103, 77],
+        [24, 35, 55, 64, 81, 104, 113, 92],
+        [49, 64, 78, 87, 103, 121, 120, 101],
+        [72, 92, 95, 98, 112, 100, 103, 99]])
 
 def get_mse(initial, compressed):
     return (np.linalg.norm(initial - compressed) ** 2) / initial.size
@@ -39,19 +51,15 @@ def get_mse(initial, compressed):
 # Encodes a 8x8 block into a rle vector
 # Stats mode also tracks the appearance frequency of rle elements
 def encode_block(block: np.ndarray, compr_scale: float = 1, stats_mode: bool=False):
+    global Q_JPEG
     h, w = block.shape
-    Q_jpeg = compr_scale * np.array(
-            [[16, 11, 10, 16, 24, 40, 51, 61],
-            [12, 12, 14, 19, 26, 28, 60, 55],
-            [14, 13, 16, 24, 40, 57, 69, 56],
-            [14, 17, 22, 29, 51, 87, 80, 62],
-            [18, 22, 37, 56, 68, 109, 103, 77],
-            [24, 35, 55, 64, 81, 104, 113, 92],
-            [49, 64, 78, 87, 103, 121, 120, 101],
-            [72, 92, 95, 98, 112, 100, 103, 99]])
+
+    # Scale quantization matrix
+    Q_jpeg_scaled = compr_scale * Q_JPEG
     
+    # Apply cosine transform and devide by quantization matrix
     block_dctn = dctn(block)
-    block_dctn_jpeg = np.round(block_dctn/Q_jpeg)
+    block_dctn_jpeg = np.round(block_dctn/Q_jpeg_scaled)
 
     # Convert to zig-zag vec
     zig_zag = to_zig_zag_vec(block_dctn_jpeg)
@@ -113,7 +121,7 @@ def to_zig_zag_vec(mat: np.ndarray):
 
     return res
 
-def from_zig_zag_vec(vec: np.ndarray):
+def from_zig_zag_vec(vec: list[int]):
     mat_size = int(np.sqrt(len(vec)))
     diag_count = 2 * mat_size - 2
     mat = np.zeros((mat_size, mat_size), np.int64)
@@ -146,7 +154,7 @@ def from_zig_zag_vec(vec: np.ndarray):
 
 # Moves right and up from row, col to col, row, setting the values in mat to the corresponding ones from res
 # Returns the new row and col
-def go_left_down_fill_mat(row:int, col:int, it_count:int, mat:np.ndarray, vec:np.ndarray, vec_i: int):
+def go_left_down_fill_mat(row:int, col:int, it_count:int, mat:np.ndarray, vec:list[int], vec_i: int):
     for _ in range(it_count):
         vec_i += 1
         row, col = row + 1, col - 1
@@ -155,7 +163,7 @@ def go_left_down_fill_mat(row:int, col:int, it_count:int, mat:np.ndarray, vec:np
 
 # Moves right and up from row, col to col, row, setting the values in mat to the corvecponding ones from vec
 # Returns the new row and col
-def go_right_up_fill_mat(row:int, col:int, it_count:int, mat:np.ndarray, vec:np.ndarray, vec_i: int):
+def go_right_up_fill_mat(row:int, col:int, it_count:int, mat:np.ndarray, vec:list[int], vec_i: int):
     for _ in range(it_count):
         vec_i += 1
         row, col = row - 1, col + 1
@@ -274,35 +282,56 @@ def from_bytes_to_rle_blocks(bytes: bytearray) -> list[list[RLE|int]]:
         
     return rle_blocks
 
+# Converts a rle vector to the image patch it represents
+def decode_block(block: list[RLE|int]):
+    global block_size
+
+    # Convert rle vectors to zig-zag and back matrix block
+    block = RLE.to_zig_zag_vec(block, block_size)
+    block = from_zig_zag_vec(block)
+
+    # Multiply with quantization matrix and apply cosine tranform inverse
+    block *= Q_JPEG
+    block = np.astype(idctn(block), np.uint8)
+
+    return block
+
 
 def decompress_img(bytes: bytearray):
+    global block_size
     block_list = from_bytes_to_rle_blocks(bytes)
 
-    return block_list
+    block_list = [decode_block(block) for block in block_list]
 
+    # Create the image from the blocks
+    img = np.zeros((img_h, img_h))
+
+    h, w = img.shape[0], img.shape[1]
+    block_i = 0
+
+    for i in range(0, h, block_h):
+        for j in range(0, w, block_h):
+            img[i:i + block_h, j:j+block_h] = block_list[block_i]
+            block_i += 1
+
+    return img
 
 def task1(img: np.ndarray):
     global img_h
 
+    img = img.copy()
     img_h = img.shape[0]
 
     img_jpeg = compress_img(img)
 
     img_dec = decompress_img(img_jpeg)
-
-    # for i in range(len(block_list)):
-    #     for j in range(len(block_list[i])):
-    #         if block_list[i][j] != img_dec[i][j]:
-    #             print(i, j)
-    #             exit(1)
-    
     
     fig, axs = plt.subplots(2)
     axs[0].imshow(img, cmap=plt.cm.gray)
-    axs[1].imshow(img_jpeg, cmap=plt.cm.gray)
+    axs[1].imshow(img_dec, cmap=plt.cm.gray)
     plt.show()
 
-    print(f"err={get_mse(img, img_jpeg)}")
+    print(f"err={get_mse(img, img_dec)}")
 
 def task2(img: np.ndarray):
     # Convert image to ycrcb

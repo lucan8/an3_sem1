@@ -1,5 +1,7 @@
+from __future__ import annotations
 import numpy as np
 from BitStream import BitBuffer, bit_length
+
 
 # Run-length encoding
 class RLE:
@@ -30,17 +32,17 @@ class RLE:
     
     # Converts a vector of RLE back to a zig-zag vector
     @staticmethod
-    def to_zig_zag_vec(rle_vec: list):
+    def to_zig_zag_vec(rle_vec: list[RLE|int], block_size: int) -> list[int]:
         res = []
-        trailing_zero_count = rle_vec[-1]
 
-        for i in range(len(rle_vec)):
-            z_count, non_z_v = rle_vec[i]
-            res.extend([0] * z_count)
-            res.append(non_z_v)
+        for i in range(len(rle_vec) - 1):
+            res.extend([0] * rle_vec[i].zero_count)
+            res.append(rle_vec[i].non_zero_val)
 
-        res.extend([0] * trailing_zero_count)
-        return np.array(res, np.float64)
+        # Add trailing zeros
+        res.extend([0] * (block_size - len(res)))
+        
+        return res
     
     # Updates the frequency vector of the RLE class
     @staticmethod
