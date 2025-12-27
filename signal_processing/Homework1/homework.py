@@ -21,7 +21,7 @@ from ZigZagVec import to_zig_zag_vec, from_zig_zag_vec
 RLE_MAX_BIT_COUNT = 0
 
 huffman = None
-img_h = None # image height, it's expected to be equal to width
+img_h, img_w = None, None # image height, it's expected to be equal to width
 block_h = 8 # blcok height, it's expected to be equal to width
 block_size = block_h * block_h
 
@@ -82,6 +82,7 @@ def from_rle_vec_blocks_to_bytes(block_list: list[list[RLE|int]]):
 # img should be have one channel
 # returns the image as series of bytes, compressed
 def compress_img(img: np.ndarray, compr_scale: float = 1):
+
     global block_h, huffman
     print(f"\nInitial image size: {img.__sizeof__()} bytes!\n")
 
@@ -100,20 +101,19 @@ def compress_img(img: np.ndarray, compr_scale: float = 1):
 # bytes: compressed image
 # Returns the initial image
 def decompress_img(bytes: bytearray, compr_scale: float = 1):
-    global block_size
+    global block_size, img_h, img_w
     
     block_list = from_bytes_to_rle_blocks(bytes)
 
     Q_JPEG_scaled = Q_JPEG * compr_scale
 
     # Create the image from the blocks
-    img = np.zeros((img_h, img_h))
+    img = np.zeros((img_h, img_w), np.uint8)
 
-    h, w = img.shape[0], img.shape[1]
     block_i = 0
 
-    for i in range(0, h, block_h):
-        for j in range(0, w, block_h):
+    for i in range(0, img_h, block_h):
+        for j in range(0, img_w, block_h):
             img[i:i + block_h, j:j+block_h] = decode_block(block_list[block_i], Q_JPEG_scaled)
             block_i += 1
 
@@ -187,10 +187,10 @@ def from_bb_to_rle(bit_buffer: BitBuffer) -> tuple[RLE|int, BitBuffer]:
 
 # Converts a bytearray to a list of blocks, each block being a list of rles
 def from_bytes_to_rle_blocks(bytes: bytearray) -> list[list[RLE|int]]:
-    global RLE_MAX_BIT_COUNT, img_h
+    global RLE_MAX_BIT_COUNT, img_h, img_w
 
     # Determine the expected number of blocks of the initial image
-    block_count = (img_h * img_h) // (block_h * block_h) 
+    block_count = (img_h * img_w) // (block_h * block_h) 
     
     # Convert byte array to rles
 
@@ -218,20 +218,17 @@ def from_bytes_to_rle_blocks(bytes: bytearray) -> list[list[RLE|int]]:
     return rle_blocks
 
 def get_mse(initial, compressed):
-    return (np.linalg.norm(initial - compressed) ** 2) / initial.size
+    diff = initial.astype(np.float64) - compressed.astype(np.float64)
+    return np.mean(diff * diff)
 
 def compr_decompr_for_one_ch(img: np.ndarray, compr_scale: float = 1):
-    global img_h
-
-    img = img.copy()
-    img_h = img.shape[0]
-
     img_jpeg = decompress_img(compress_img(img, compr_scale), compr_scale)
     mse = get_mse(img, img_jpeg)
 
     return img_jpeg, mse
 
 def task1(img: np.ndarray):
+    img = resize_img_one_ch(img[:64, :64])
     img_jpeg, mse = compr_decompr_for_one_ch(img)
     
     fig, axs = plt.subplots(2)
@@ -259,6 +256,8 @@ def compr_decompr_for_colored(img_ycrcb: np.ndarray, compr_scale: float = 1):
     return img_ycrcb_jpeg, get_mse(img_ycrcb, img_ycrcb_jpeg)
 
 def task2(img: np.ndarray):
+    img = resize_img_one_ch(img)
+
     # Convert image to ycrcb
     img_bgr = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
     img_ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCR_CB)
@@ -303,6 +302,7 @@ def compr_decompr_until_thresh(img: np.ndarray, mse_thresh: np.float64):
     return chosen_img_jpeg, chosen_mse
 
 def task3(img: np.ndarray, mse_thresh: np.float64, colored: bool = True):
+    img = resize_img_one_ch(img)
     # If colored desired, convert to ycrcb
     if colored:
         img_bgr = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
@@ -316,6 +316,66 @@ def task3(img: np.ndarray, mse_thresh: np.float64, colored: bool = True):
 
     print(f"mse={mse}")
 
+def task4():
+    curr_dir = os.path.dirname(__file__)
+    filename = "10 sec 2D Test animation.mp4"
+    vc = cv2.VideoCapture(f"{curr_dir}/{filename}")
+
+    # Check if the video opened correctly
+    if not vc.isOpened():
+        print("Error: Could not open video file.")
+        exit()
+
+    # Read and display video frames
+    while True:
+        ret, frame = vc.read()
+
+        if not ret:
+            break   # No more frames -> exit loop
+        
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        frame = resize_img_one_ch(frame)
+        frame, mse = compr_decompr_for_one_ch(frame)
+        cv2.imshow("Video", frame)
+
+        print(f"MSE:{mse}")
+        # Press Q to quit
+        if cv2.waitKey(25) & 0xFF == ord('q'):
+            break
+
+    # Release resources
+    vc.release()
+    cv2.destroyAllWindows()
+
+def resize_img_colored(img: np.ndarray):
+    ch1 = resize_img_one_ch(img[:, :, 0])
+    ch2 = resize_img_one_ch(img[:, :, 1])
+    ch3 = resize_img_one_ch(img[:, :, 2])
+
+    (h, w), ch = ch1.shape, img.shape[2]
+    new_img = np.zeros((h, w, ch), dtype=np.uint8)
+    new_img[:, :, 0], new_img[:, :, 1], new_img[:, :, 2] = ch1, ch2, ch3
+
+    return new_img
+
+# Makes it possible for the image to be split in blocks
+# Returns the new image and updates the global img_h and img_w
+def resize_img_one_ch(img: np.ndarray) -> np.ndarray:
+    global img_h, img_w, block_h
+
+    img_h, img_w = img.shape
+
+    # Make the image divisible by blocks
+    added_h, added_w = block_h - (img_h % block_h), block_h - (img_w % block_h)
+    if added_h != block_h:
+        img_h = img_h + added_h,
+    if added_w != block_h:
+        img_w = img_w + added_w
+
+    img = cv2.resize(img, (img_w, img_h))
+
+    return img
+
 img = datasets.ascent()
-# task1(img)
-task3(img, 4, False)
+task4()
+# task4()
