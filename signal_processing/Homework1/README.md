@@ -18,10 +18,10 @@ All the tasks show the initial and compressed + decompressed images for comparis
 
 ## Dependencies
 
-matplotlib==3.10.6
-numpy==2.2.6
-opencv-python==4.12.0.88
-scipy==1.16.3
+- matplotlib==3.10.6
+- numpy==2.2.6
+- opencv-python==4.12.0.88
+- scipy==1.16.3
 
 ## Algorithm
 
