@@ -12,7 +12,7 @@ from ZigZagVec import to_zig_zag_vec, from_zig_zag_vec
 
 #TODO: REFACTOR+OPTIMIZATION: FOR BOTH COMPRESS AND DECOMPRESS
 # ELIMINATE ENCODE/DECODE AND KEEP ALL OPERATIONS IN THE SAME FUNCTION, USE VECTORIZATION FOR EACH STEP
-# I WILL ASSUME IMAGES ARE SQUARE SHAPED(NXN)
+
 # FOR NOW EVERYTHING IS IN MEMORY
 
 # TODO: WHY DOES DOING CHANNEL WISE MSE AVERAGE DIFFER FROM THE GLOBAL ONE? 
@@ -228,7 +228,7 @@ def compr_decompr_for_one_ch(img: np.ndarray, compr_scale: float = 1):
     return img_jpeg, mse
 
 def task1(img: np.ndarray):
-    img = resize_img_one_ch(img[:64, :64])
+    img = resize_img_one_ch(img)
     img_jpeg, mse = compr_decompr_for_one_ch(img)
     
     fig, axs = plt.subplots(2)
@@ -240,7 +240,7 @@ def task1(img: np.ndarray):
 
 def compr_decompr_for_colored(img_ycrcb: np.ndarray, compr_scale: float = 1):
     # Split by channel
-    img_y, img_cr, img_cb = img_ycrcb[:, :, 0], img_ycrcb[:, :, 1], img_ycrcb[:, :, 2]
+    img_y, img_cr, img_cb = img_ycrcb[:, :, 0].copy(), img_ycrcb[:, :, 1].copy(), img_ycrcb[:, :, 2].copy()
 
     # Apply compression and decompression on every channel
     img_y_jpeg, mse_y = compr_decompr_for_one_ch(img_y, compr_scale)
@@ -303,23 +303,23 @@ def compr_decompr_until_thresh(img: np.ndarray, mse_thresh: np.float64):
 
 def task3(img: np.ndarray, mse_thresh: np.float64, colored: bool = True):
     img = resize_img_one_ch(img)
+    cmap = plt.cm.gray
     # If colored desired, convert to ycrcb
     if colored:
         img_bgr = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
         img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCR_CB)
+        cmap = None
     
     img_jpeg, mse = compr_decompr_until_thresh(img, mse_thresh)
     fig, axs = plt.subplots(2)
-    axs[0].imshow(img)
-    axs[1].imshow(img_jpeg)
+    axs[0].imshow(img, cmap=cmap)
+    axs[1].imshow(img_jpeg, cmap=cmap)
     plt.show()
 
     print(f"mse={mse}")
 
-def task4():
-    curr_dir = os.path.dirname(__file__)
-    filename = "10 sec 2D Test animation.mp4"
-    vc = cv2.VideoCapture(f"{curr_dir}/{filename}")
+def task4(video_path: str, colored: bool = False):
+    vc = cv2.VideoCapture(video_path)
 
     # Check if the video opened correctly
     if not vc.isOpened():
@@ -333,10 +333,19 @@ def task4():
         if not ret:
             break   # No more frames -> exit loop
         
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        frame = resize_img_one_ch(frame)
-        frame, mse = compr_decompr_for_one_ch(frame)
-        cv2.imshow("Video", frame)
+        if colored:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2YCR_CB)
+            frame = resize_img_colored(frame)
+            frame_jpeg, mse = compr_decompr_for_colored(frame)
+            frame_jpeg = cv2.cvtColor(frame_jpeg, cv2.COLOR_YCR_CB2BGR)
+            frame = cv2.cvtColor(frame, cv2.COLOR_YCR_CB2BGR)
+        else:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            frame = resize_img_one_ch(frame)
+            frame_jpeg, mse = compr_decompr_for_one_ch(frame)
+
+        cv2.imshow("Video Initial", frame)
+        cv2.imshow(f"Video JPEG", frame_jpeg)
 
         print(f"MSE:{mse}")
         # Press Q to quit
@@ -377,5 +386,10 @@ def resize_img_one_ch(img: np.ndarray) -> np.ndarray:
     return img
 
 img = datasets.ascent()
-task4()
-# task4()
+curr_dir = os.path.dirname(__file__)
+video_f_name = "10 sec 2D Test animation.mp4"
+# task1(img)
+# task2(img)
+# task3(img, 2, False)
+# task4(f"{curr_dir}/{video_f_name}", False)
+task4(f"{curr_dir}/{video_f_name}", True)
